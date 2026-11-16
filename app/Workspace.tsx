@@ -1,0 +1,32 @@
+'use client';
+import { useEffect, useRef, useState, type CSSProperties, type PointerEvent, type ReactNode } from 'react';
+type Panel = 'curriculum' | 'instructor';
+type Layout = { left: number; right: number; curriculum: boolean; instructor: boolean };
+const defaults: Layout = { left: 260, right: 355, curriculum: true, instructor: true };
+export default function Workspace({children, reveal, onDismissReveal}:{children:ReactNode; reveal:string; onDismissReveal:()=>void}) {
+ const [layout,setLayout]=useState<Layout>(defaults);
+ const [loaded,setLoaded]=useState(false);
+ const [maximized,setMaximized]=useState<Panel|'lesson'|null>(null);
+ const [width,setWidth]=useState(1400);
+ const [dragging,setDragging]=useState(false);
+ const shell=useRef<HTMLDivElement>(null);
+ const drag=useRef<{panel:Panel; x:number; size:number}|null>(null);
+ useEffect(()=>{try{const value=JSON.parse(localStorage.getItem('caj-panel-layout')||'null');if(value&&Number.isFinite(value.left)&&Number.isFinite(value.right)&&typeof value.curriculum==='boolean'&&typeof value.instructor==='boolean')setLayout({...value,left:Math.max(180,Math.min(520,value.left)),right:Math.max(240,Math.min(700,value.right))});}catch{}setLoaded(true);},[]);
+ useEffect(()=>{if(loaded)try{localStorage.setItem('caj-panel-layout',JSON.stringify(layout));}catch{}},[layout,loaded]);
+ useEffect(()=>{const el=shell.current;if(!el)return;const observer=new ResizeObserver(entries=>setWidth(entries[0].contentRect.width));observer.observe(el);return()=>observer.disconnect();},[]);
+ useEffect(()=>{if(reveal==='aside'){setLayout(l=>({...l,instructor:true}));setMaximized(m=>m&&m!=='instructor'?null:m);}if(reveal==='curriculum'){setLayout(l=>({...l,curriculum:true}));setMaximized(m=>m&&m!=='curriculum'?null:m);}},[reveal]);
+ useEffect(()=>{const onKey=(event:KeyboardEvent)=>{if(event.key==='Escape')setMaximized(null);if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='b'&&!event.shiftKey){event.preventDefault();setMaximized(null);setLayout(l=>event.altKey?{...l,instructor:!l.instructor}:{...l,curriculum:!l.curriculum});}};window.addEventListener('keydown',onKey);return()=>window.removeEventListener('keydown',onKey);},[]);
+ // Fit sidebars to the available space while reserving a usable central editor.
+ const budget=Math.max(0,width-58-260-(layout.curriculum?6:0)-(layout.instructor?6:0));
+ let left=layout.curriculum?layout.left:0,right=layout.instructor?layout.right:0;
+ if(left+right>budget){const extra=budget-(left?180:0)-(right?240:0);const requested=(left?left-180:0)+(right?right-240:0);left=left?180+Math.max(0,extra)*(requested?(left-180)/requested:0):0;right=right?240+Math.max(0,extra)*(requested?(right-240)/requested:0):0;}
+ function toggle(panel:Panel){onDismissReveal();setMaximized(null);setLayout(l=>({...l,[panel]:!l[panel]}));}
+ function maximize(panel:Panel|'lesson'){onDismissReveal();setMaximized(m=>m===panel?null:panel);if(panel!=='lesson')setLayout(l=>({...l,[panel]:true}));}
+ function resize(panel:Panel,size:number){setLayout(l=>({...l,[panel==='curriculum'?'left':'right']:Math.max(panel==='curriculum'?180:240,Math.min(panel==='curriculum'?520:700,size))}));}
+ function start(event:PointerEvent<HTMLDivElement>,panel:Panel){if(event.button!==0)return;event.preventDefault();event.currentTarget.setPointerCapture(event.pointerId);drag.current={panel,x:event.clientX,size:panel==='curriculum'?left:right};setDragging(true);}
+ function move(event:PointerEvent<HTMLDivElement>){const d=drag.current;if(!d)return;const delta=(event.clientX-d.x)*(d.panel==='curriculum'?1:-1);const other=d.panel==='curriculum'?right:left;const min=d.panel==='curriculum'?180:240;resize(d.panel,Math.max(min,Math.min(d.size+delta,width-58-260-other-12)));}
+ function stop(){drag.current=null;setDragging(false);}
+ const style={'--curriculum-width':`${left}px`,'--instructor-width':`${right}px`,'--left-divider':layout.curriculum?'6px':'0px','--right-divider':layout.instructor?'6px':'0px'} as CSSProperties;
+ function separator(panel:Panel){const isLeft=panel==='curriculum';return <div className={`panel-divider ${isLeft?'left-divider':'right-divider'}`} role="separator" tabIndex={0} aria-label={`Resize ${isLeft?'curriculum':'AI instructor'} panel`} aria-orientation="vertical" aria-valuemin={isLeft?180:240} aria-valuemax={isLeft?520:700} aria-valuenow={Math.round(isLeft?left:right)} onPointerDown={e=>start(e,panel)} onPointerMove={move} onPointerUp={stop} onPointerCancel={stop} onLostPointerCapture={stop} onDoubleClick={()=>resize(panel,isLeft?defaults.left:defaults.right)} onKeyDown={e=>{if(e.key==='ArrowLeft'||e.key==='ArrowRight'){e.preventDefault();resize(panel,(isLeft?left:right)+(e.key==='ArrowRight'?1:-1)*(isLeft?1:-1)*(e.shiftKey?40:10));}if(e.key==='Home'){e.preventDefault();resize(panel,isLeft?defaults.left:defaults.right);}}}/>;}
+ return <><div className="workspace-toolbar" aria-label="Workspace layout controls"><div className="panel-control"><button aria-pressed={layout.curriculum} title="Toggle curriculum (Ctrl+B)" onClick={()=>toggle('curriculum')}>Lessons</button><button aria-label={maximized==='curriculum'?'Restore curriculum panel':'Maximize curriculum panel'} title="Maximize / restore curriculum" onClick={()=>maximize('curriculum')}>{maximized==='curriculum'?'↙':'⛶'}</button></div><div className="panel-control"><span>Lesson</span><button aria-label={maximized==='lesson'?'Restore lesson panel':'Maximize lesson panel'} title="Maximize / restore lesson" onClick={()=>maximize('lesson')}>{maximized==='lesson'?'↙':'⛶'}</button></div><div className="panel-control"><button aria-pressed={layout.instructor} title="Toggle AI instructor (Ctrl+Alt+B)" onClick={()=>toggle('instructor')}>AJ Instructor</button><button aria-label={maximized==='instructor'?'Restore instructor panel':'Maximize instructor panel'} title="Maximize / restore instructor" onClick={()=>maximize('instructor')}>{maximized==='instructor'?'↙':'⛶'}</button></div><button className="reset-panels" title="Restore default widths and show all panels" onClick={()=>{setLayout(defaults);setMaximized(null);}}>Reset layout</button></div><div ref={shell} style={style} className={`shell vscode-shell ${layout.curriculum?'':'curriculum-collapsed'} ${layout.instructor?'':'instructor-collapsed'} ${maximized?`maximize-${maximized}`:''} ${dragging?'resizing':''}`}>{children}{separator('curriculum')}{separator('instructor')}</div></>;
+}
